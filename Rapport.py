@@ -161,7 +161,7 @@ def nb_person(str):
 	return(str.count('@PERSON') + str.count('@DR'))
 
 def nb_location(str):
-	return(str.count('@LOCATION'))
+	return(str.count('@LOCATION') + str.count('@CITY') + str.count('@STATE'))
 
 def nb_money(str):
 	return(str.count('@MONEY'))
@@ -212,7 +212,7 @@ def replace_char(str):
 	return (str)
 
 def replace_anom(str):
-	for char in ['@ORGANIZATION.', '@CAPS.', '@PERSON.', '@LOCATION.', '@MONEY.', '@TIME.', '@DATE.', '@PERCENT.', '@MONTH.', '@NUM.', '@DR.']:
+	for char in ['@ORGANIZATION.', '@CAPS.', '@PERSON.', '@LOCATION.', '@MONEY.', '@TIME.', '@DATE.', '@PERCENT.', '@MONTH.', '@NUM.', '@DR.', '@CITY.', '@STATE.']:
 		str = re.sub(char, ' ', str)
 	return (str)
 
@@ -267,18 +267,17 @@ pipeline_w2v = Pipeline().setStages([documenter, tokenizer, normalizer, cleaner,
 pipeline_glove = Pipeline().setStages([documenter, sentencer,
 				tokenizer2, vectorizer2, finisher2])
 
-data_w2v = pipeline_w2v.fit(data).transform(data)
-data_glove = pipeline_glove.fit(data).transform(data)
-
 if not os.path.exists('Data/data_w2v.parquet'):
 	data_w2v = pipeline_w2v.fit(data).transform(data)
 	data_w2v.write.parquet('Data/data_w2v.parquet')
+	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
 else:
 	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
 
 if not os.path.exists('Data/data_glove.parquet'):
 	data_glove = pipeline_w2v.fit(data).transform(data)
 	data_glove.write.parquet('Data/data_glove.parquet')
+	data_glove = sc.read.parquet('Data/data_glove.parquet')
 else:
 	data_glove = sc.read.parquet('Data/data_glove.parquet')
 
@@ -286,12 +285,11 @@ else:
 data_w2v_pd = data_w2v.toPandas().set_index('essay_id')
 data_glove_pd = data_glove.toPandas().set_index('essay_id')
 
-vector_w2v = pd.DataFrame(data_w2v_pd['vectorized'].to_list(),
-	columns=['vec_' + str(i) for i in range(0, 300)], index= data_w2v_pd.index)
+vector_w2v = data_w2v_pd['vectorized'].apply(lambda x: pd.Series(x.toArray()))
+vector_w2v.columns = ['vec_' + str(i) for i in range(0, 300)]
 
-vector_glove = pd.DataFrame([data_glove_pd['finished'][row][0]
-	for row in data_glove_pd.index], columns=['vec_' + str(i) for i in
-	range(0, 300)], index= data_w2v_pd.index)
+vector_glove = data_glove_pd['vectorized'].apply(lambda x: pd.Series(x.toArray()))
+vector_glove.columns = ['vec_' + str(i) for i in range(0, 300)]
 
 selected = ['essay_set'] + [s for s in data_w2v_pd.columns if 'nb' in s]
 
