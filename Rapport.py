@@ -30,7 +30,7 @@ from pyspark.ml.feature import VectorAssembler, StandardScaler, VectorSlicer, Wo
 
 
 from sparknlp.base import DocumentAssembler, Finisher, EmbeddingsFinisher
-from sparknlp.annotator import Tokenizer, Normalizer, StopWordsCleaner, SentenceDetector, WordEmbeddingsModel,
+from sparknlp.annotator import Tokenizer, Normalizer, StopWordsCleaner, SentenceDetector, WordEmbeddingsModel
 from sparknlp.pretrained import LemmatizerModel
 
 # Download data
@@ -231,9 +231,10 @@ data = data.withColumn('essay', correcterUdf(data.essay))
 data = data.withColumn('essay', replace_charUdf(data.essay))
 data = data.withColumn('essay', replace_anomUdf(data.essay))
 
-if not os.path.isfile('Data/data_corrected.parquet'):
+if not os.path.exists('Data/data_corrected.parquet'):
 	data.write.parquet('Data/data_corrected.parquet')
-	data.write.csv('Data/data_corrected.csv')
+	data = sc.read.parquet('Data/data_corrected.parquet')
+	data.toPandas().to_csv('Data/data_corrected.csv')
 else:
 	data = sc.read.parquet('Data/data_corrected.parquet')
 
@@ -269,13 +270,13 @@ pipeline_glove = Pipeline().setStages([documenter, sentencer,
 data_w2v = pipeline_w2v.fit(data).transform(data)
 data_glove = pipeline_glove.fit(data).transform(data)
 
-if not os.path.isfile('Data/data_w2v.parquet'):
+if not os.path.exists('Data/data_w2v.parquet'):
 	data_w2v = pipeline_w2v.fit(data).transform(data)
 	data_w2v.write.parquet('Data/data_w2v.parquet')
 else:
 	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
 
-if not os.path.isfile('Data/data_glove.parquet'):
+if not os.path.exists('Data/data_glove.parquet'):
 	data_glove = pipeline_w2v.fit(data).transform(data)
 	data_glove.write.parquet('Data/data_glove.parquet')
 else:
