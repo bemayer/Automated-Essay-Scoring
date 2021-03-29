@@ -275,7 +275,7 @@ else:
 	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
 
 if not os.path.exists('Data/data_glove.parquet'):
-	data_glove = pipeline_w2v.fit(data).transform(data)
+	data_glove = pipeline_glove.fit(data).transform(data)
 	data_glove.write.parquet('Data/data_glove.parquet')
 	data_glove = sc.read.parquet('Data/data_glove.parquet')
 else:
