@@ -5,7 +5,7 @@ Created on Wed Mar 17 09:04:33 2021
 @author: bemayer
 '''
 
-# pyspark --packages com.johnsnowlabs.nlp:spark-nlp_2.12:3.0.0
+# pyspark --packages com.johnsnowlabs.nlp:spark-nlp_2.12:3.0.0 --conf spark.yarn.maxAppAttempts=2 --executor-memory 2g --driver-memory 2g
 # https://www.sicara.ai/blog/2017-05-02-get-started-pyspark-jupyter-notebook-3-minutes
 
 import re
@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 
 from pyspark.sql import SparkSession
 from pyspark.sql.types import *
-from pyspark.sql.functions import first, udf, split, flatten
+from pyspark.sql.functions import first, udf, split, flatten, col
 
 from pyspark.ml import Pipeline
 from pyspark.ml.stat import Summarizer
@@ -29,8 +29,8 @@ from pyspark.ml.linalg import Vectors
 from pyspark.ml.feature import VectorAssembler, StandardScaler, VectorSlicer, Word2Vec
 
 
-from sparknlp.base import DocumentAssembler, Finisher, EmbeddingsFinisher
-from sparknlp.annotator import Tokenizer, Normalizer, StopWordsCleaner, SentenceDetector, WordEmbeddingsModel
+from sparknlp.base import DocumentAssembler, Finisher, EmbeddingsFinisher, LightPipeline
+from sparknlp.annotator import Tokenizer, Normalizer, StopWordsCleaner, SentenceDetector, WordEmbeddingsModel, SentenceEmbeddings
 from sparknlp.pretrained import LemmatizerModel
 
 # Download data
@@ -243,55 +243,59 @@ else:
 # Preprocessing pipeline
 documenter = (DocumentAssembler().setCleanupMode('shrink').setInputCol('essay')
 				.setOutputCol('document'))
-sentencer = (SentenceDetector().setInputCols(['document'])
-				.setOutputCol('sentence'))
 tokenizer = Tokenizer().setInputCols(['document']).setOutputCol('tokenized')
-tokenizer2 = Tokenizer().setInputCols(['sentence']).setOutputCol('tokenized')
+tokenizer2 = Tokenizer().setInputCols(['document']).setOutputCol('tokenized')
 normalizer = (Normalizer().setLowercase(True).setInputCols(['tokenized'])
 				.setOutputCol('normalized'))
 cleaner = (StopWordsCleaner().setInputCols(['normalized'])
 				.setOutputCol('cleaned'))
 lemmatizer = (LemmatizerModel.pretrained(name = 'lemma_antbnc', lang='en')
 				.setInputCols(['cleaned']).setOutputCol('lemmatized'))
+finisher = Finisher().setInputCols(['lemmatized']).setOutputCols('finished')
 vectorizer = (Word2Vec().setSeed(42).setVectorSize(300)
 				.setInputCol('finished').setOutputCol('vectorized'))
-vectorizer2 = (WordEmbeddingsModel().pretrained('glove_6B_300', 'xx')
-				.setInputCols('sentence', 'tokenized')
-				.setOutputCol('vectorized'))
-finisher = Finisher().setInputCols(['lemmatized']).setOutputCols('finished')
+vectorizer2 = (WordEmbeddingsModel.pretrained('glove_6B_300', 'xx')
+				.setInputCols('document', 'tokenized')
+				.setOutputCol('embeddings'))
+averager = SentenceEmbeddings().setPoolingStrategy("SUM").setInputCols(['document', 'embeddings']).setOutputCol('vectorized')
+
 
 
 pipeline_w2v = Pipeline().setStages([documenter, tokenizer, normalizer, cleaner,
 				lemmatizer, finisher, vectorizer])
-pipeline_glove = Pipeline().setStages([documenter, sentencer,
-				tokenizer2, vectorizer2])
+pipeline_glove = Pipeline().setStages([documenter, tokenizer2, vectorizer2, averager]).fit(data)
+# Light Pipelines are quicker ?
+# https://medium.com/spark-nlp/spark-nlp-101-lightpipeline-a544e93f20f1
+pipeline_glove_light = LightPipeline(pipeline_glove)
+
 
 if not os.path.exists('Data/data_w2v.parquet'):
 	data_w2v = pipeline_w2v.fit(data).transform(data)
 	data_w2v.write.parquet('Data/data_w2v.parquet')
-	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
+	data_w2v_pd = pd.read_parquet('Data/data_w2v.parquet')
 else:
-	data_w2v = sc.read.parquet('Data/data_w2v.parquet')
+	data_w2v_pd = pd.read_parquet('Data/data_w2v.parquet')
 
 if not os.path.exists('Data/data_glove.parquet'):
-	data_glove = pipeline_glove.fit(data).transform(data)
-	data_glove = data_glove.drop('document', 'sentence', 'tokenized')
+	data_glove = pipeline_glove_light.transform(data)
+	data_glove = data_glove.drop('document', 'tokenized', 'embeddings')
 	data_glove.write.parquet('Data/data_glove.parquet')
-	data_glove = sc.read.parquet('Data/data_glove.parquet')
+	data_glove_pd = pd.read_parquet('Data/data_glove.parquet')
 else:
-	data_glove = sc.read.parquet('Data/data_glove.parquet')
+	data_glove_pd = pd.read_parquet('Data/data_glove.parquet')
 
 
-data_w2v_pd = data_w2v.toPandas().set_index('essay_id')
-data_glove_pd = data_glove.toPandas().set_index('essay_id')
+data_w2v_pd = data_w2v_pd.set_index('essay_id')
+data_glove_pd = data_glove_pd.set_index('essay_id')
 
-vector_w2v = data_w2v_pd['vectorized'].apply(lambda x: pd.Series(x.toArray()))
-vector_w2v.columns = ['vec_' + str(i) for i in range(0, 300)]
+selected = ['essay_set'] + [s for s in data.columns if 'nb' in s]
+vec_names = ['vec_' + str(i) for i in range(0, 300)]
 
-vector_glove = data_glove_pd['vectorized'].apply(lambda x: pd.Series(x.toArray()))
-vector_glove.columns = ['vec_' + str(i) for i in range(0, 300)]
+vector_w2v = [[essay, *(data_w2v_pd['vectorized'][essay]['values'])] for essay in data_w2v_pd['vectorized'].index]
+vector_w2v = pd.DataFrame(vector_w2v, columns=['essay_id', *vec_names]).set_index('essay_id')
 
-selected = ['essay_set'] + [s for s in data_w2v_pd.columns if 'nb' in s]
+vector_glove = [[essay, *(data_glove_pd['vectorized'][essay][0]['embeddings'])] for essay in data_glove_pd['vectorized'].index]
+vector_glove = pd.DataFrame(vector_glove, columns=['essay_id', *vec_names]).set_index('essay_id')
 
 X_w2v = pd.concat([data_w2v_pd[selected], vector_w2v], axis = 1)
 X_glove = pd.concat([data_glove_pd[selected], vector_glove], axis = 1)
@@ -302,19 +306,26 @@ X_w2v_test = X_w2v.loc[scores_test.index]
 X_glove_train = X_glove.loc[scores_train.index]
 X_glove_test = X_glove.loc[scores_test.index]
 
-X_w2v_train.to_csv('Data/X_w2v_train.csv')
-X_w2v_test.to_csv('Data/X_w2v_test.csv')
+X_w2v_train.to_csv('Data/X_w2v_train.taz', compression='gzip')
+X_w2v_test.to_csv('Data/X_w2v_test.taz', compression='gzip')
 
-X_glove_train.to_csv('Data/X_glove_train.csv')
-X_glove_test.to_csv('Data/X_glove_test.csv')
+X_glove_train.to_csv('Data/X_glove_train.taz', compression='gzip')
+X_glove_test.to_csv('Data/X_glove_test.taz', compression='gzip')
 
-scores_train.to_csv('Data/y_train.csv')
-scores_test.to_csv('Data/y_test.csv')
+scores_train.to_csv('Data/y_train.taz', compression='gzip')
+scores_test.to_csv('Data/y_test.taz', compression='gzip')
 
-
-
-# Stratified sampling
 
 
 # Visualization: make a treemap for most frequent subject ?
 # https://plotly.com/python/treemaps/
+
+
+
+
+
+
+
+
+
+
