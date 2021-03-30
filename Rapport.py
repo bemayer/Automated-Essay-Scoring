@@ -259,13 +259,12 @@ vectorizer2 = (WordEmbeddingsModel().pretrained('glove_6B_300', 'xx')
 				.setInputCols('sentence', 'tokenized')
 				.setOutputCol('vectorized'))
 finisher = Finisher().setInputCols(['lemmatized']).setOutputCols('finished')
-finisher2 = (EmbeddingsFinisher().setOutputAsVector(True)
-				.setInputCols(['vectorized']).setOutputCols('finished'))
+
 
 pipeline_w2v = Pipeline().setStages([documenter, tokenizer, normalizer, cleaner,
 				lemmatizer, finisher, vectorizer])
 pipeline_glove = Pipeline().setStages([documenter, sentencer,
-				tokenizer2, vectorizer2, finisher2])
+				tokenizer2, vectorizer2])
 
 if not os.path.exists('Data/data_w2v.parquet'):
 	data_w2v = pipeline_w2v.fit(data).transform(data)
@@ -276,6 +275,7 @@ else:
 
 if not os.path.exists('Data/data_glove.parquet'):
 	data_glove = pipeline_glove.fit(data).transform(data)
+	data_glove = data_glove.drop('document', 'sentence', 'tokenized')
 	data_glove.write.parquet('Data/data_glove.parquet')
 	data_glove = sc.read.parquet('Data/data_glove.parquet')
 else:
