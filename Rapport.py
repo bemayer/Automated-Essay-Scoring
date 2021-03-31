@@ -14,6 +14,7 @@ import math
 import string
 import kaggle
 import zipfile
+import findspark
 import pandas as pd
 import numpy as np
 import language_check
@@ -41,7 +42,15 @@ if not os.path.exists('Data'):
 
 
 # Create SparkSession
-sc = SparkSession.builder.getOrCreate()
+findspark.init()
+sc = SparkSession.builder \
+    .appName("Spark NLP")\
+    .master("local[4]")\
+    .config("spark.driver.memory","16G")\
+    .config("spark.driver.maxResultSize", "0") \
+    .config("spark.kryoserializer.buffer.max", "2000M")\
+    .config("spark.jars.packages", "com.johnsnowlabs.nlp:spark-nlp_2.12:3.0.0") \
+    .getOrCreate()
 
 # Import data
 data = sc.read.csv('./Data/training_set_rel3.tsv', sep='\t',
@@ -244,7 +253,6 @@ else:
 documenter = (DocumentAssembler().setCleanupMode('shrink').setInputCol('essay')
 				.setOutputCol('document'))
 tokenizer = Tokenizer().setInputCols(['document']).setOutputCol('tokenized')
-tokenizer2 = Tokenizer().setInputCols(['document']).setOutputCol('tokenized')
 normalizer = (Normalizer().setLowercase(True).setInputCols(['tokenized'])
 				.setOutputCol('normalized'))
 cleaner = (StopWordsCleaner().setInputCols(['normalized'])
@@ -255,22 +263,24 @@ finisher = Finisher().setInputCols(['lemmatized']).setOutputCols('finished')
 vectorizer = (Word2Vec().setSeed(42).setVectorSize(300)
 				.setInputCol('finished').setOutputCol('vectorized'))
 vectorizer2 = (WordEmbeddingsModel.pretrained('glove_6B_300', 'xx')
-				.setInputCols('document', 'tokenized')
-				.setOutputCol('embeddings'))
-averager = SentenceEmbeddings().setPoolingStrategy("SUM").setInputCols(['document', 'embeddings']).setOutputCol('vectorized')
-
-
+				.setInputCols('document', 'lemmatized')
+				.setOutputCol('embedded'))
+averager = SentenceEmbeddings().setPoolingStrategy("SUM").setInputCols(['document', 'embedded']).setOutputCol('averaged')
+finisher2 = EmbeddingsFinisher().setInputCols(['averaged']).setOutputCols('vectorized')
 
 pipeline_w2v = Pipeline().setStages([documenter, tokenizer, normalizer, cleaner,
-				lemmatizer, finisher, vectorizer])
-pipeline_glove = Pipeline().setStages([documenter, tokenizer2, vectorizer2, averager]).fit(data)
+				lemmatizer, finisher, vectorizer]).fit(data)
+pipeline_glove = Pipeline().setStages([documenter, tokenizer, normalizer, cleaner,
+				lemmatizer, vectorizer2, averager, finisher2]).fit(data)
 # Light Pipelines are quicker ?
 # https://medium.com/spark-nlp/spark-nlp-101-lightpipeline-a544e93f20f1
+pipeline_w2v_light = LightPipeline(pipeline_w2v)
 pipeline_glove_light = LightPipeline(pipeline_glove)
 
 
 if not os.path.exists('Data/data_w2v.parquet'):
-	data_w2v = pipeline_w2v.fit(data).transform(data)
+	data_w2v = pipeline_w2v_light.transform(data)
+	data_w2v = data_w2v.drop('finished')
 	data_w2v.write.parquet('Data/data_w2v.parquet')
 	data_w2v_pd = pd.read_parquet('Data/data_w2v.parquet')
 else:
@@ -278,7 +288,8 @@ else:
 
 if not os.path.exists('Data/data_glove.parquet'):
 	data_glove = pipeline_glove_light.transform(data)
-	data_glove = data_glove.drop('document', 'tokenized', 'embeddings')
+	data_glove = data_glove.drop('document', 'tokenized', 'normalized',
+		'cleaned', 'lemmatized', 'embedded', 'averaged')
 	data_glove.write.parquet('Data/data_glove.parquet')
 	data_glove_pd = pd.read_parquet('Data/data_glove.parquet')
 else:
@@ -294,7 +305,7 @@ vec_names = ['vec_' + str(i) for i in range(0, 300)]
 vector_w2v = [[essay, *(data_w2v_pd['vectorized'][essay]['values'])] for essay in data_w2v_pd['vectorized'].index]
 vector_w2v = pd.DataFrame(vector_w2v, columns=['essay_id', *vec_names]).set_index('essay_id')
 
-vector_glove = [[essay, *(data_glove_pd['vectorized'][essay][0]['embeddings'])] for essay in data_glove_pd['vectorized'].index]
+vector_glove = [[essay, *(data_glove_pd['vectorized'][essay][0])] for essay in data_glove_pd['vectorized'].index]
 vector_glove = pd.DataFrame(vector_glove, columns=['essay_id', *vec_names]).set_index('essay_id')
 
 X_w2v = pd.concat([data_w2v_pd[selected], vector_w2v], axis = 1)
