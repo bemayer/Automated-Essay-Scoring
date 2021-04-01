@@ -227,7 +227,7 @@ Focus on issues with word shuffling
 
 ## Méthodologie
 
-Métrique d'erreur: Kappa
+Métrique d'erreur: MSE
 
 Importation
 
