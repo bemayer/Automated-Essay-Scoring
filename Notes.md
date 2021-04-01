@@ -72,6 +72,20 @@ LSTM
 
 BLSTM
 
+### SahilC on GitHub \*\*\*
+
+https://github.com/SahilC/AutomaticEssayGrading
+
+#### Preprocessing
+
+Glove
+
+#### Models
+
+SVM
+LSTM
+Random Forest
+
 ### Arshad Arafat and Mohammed Raihanuzzaman at BRAC University \*
 
 http://dspace.bracu.ac.bd/xmlui/bitstream/handle/10361/5399/12101114.pdf
